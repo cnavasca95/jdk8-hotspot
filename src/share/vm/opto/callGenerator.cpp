@@ -1175,6 +1175,7 @@ void WarmCallInfo::init(JVMState* call_site, ciMethod* call_method, ciCallProfil
 // is_cold:  Return true if the node should never be inlined.
 // This is true if any of the key metrics are extreme.
 bool WarmCallInfo::is_cold() const {
+  printf("c = %f p = %f w = %f s = %f\n", count(), profit(), work(), size());
   if (count()  <  WarmCallMinCount)        return true;
   if (profit() <  WarmCallMinProfit)       return true;
   if (work()   >  WarmCallMaxWork)         return true;

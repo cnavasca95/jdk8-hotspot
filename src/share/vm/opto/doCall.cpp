@@ -63,6 +63,13 @@ void trace_type_profile(Compile* C, ciMethod *method, int depth, int bci, ciMeth
   }
 }
 
+static int eylFd = -1;
+//static int eylCount = 1;
+static char eylName[200];
+static const char* noInliningStr = "NO_INLINE";
+static const char* forceInlineMethodStr = "FORCE_INLINE";
+static char methodInlineName[200];
+
 CallGenerator* Compile::call_generator(ciMethod* callee, int vtable_index, bool call_does_dispatch,
                                        JVMState* jvms, bool allow_inline,
                                        float prof_factor, ciKlass* speculative_receiver_type,
@@ -78,6 +85,21 @@ CallGenerator* Compile::call_generator(ciMethod* callee, int vtable_index, bool 
   if (env()->dtrace_method_probes()) {
     allow_inline = false;
   }
+
+  if (eylFd < 0) {
+    strncpy(eylName, "/tmp/eyl-hotspot-XXXXXX", 200);
+    mktemp(eylName);
+    if ((eylFd = open(eylName, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1) {
+      abort();
+    }
+  }
+  //const char *msg = "eyl testing\n";
+  //if (write(eylFd, msg, strlen(msg)) < 0) {
+  //if (dprintf(eylFd, "eyl count = %d (%s.%s), caller = %s.%s\n", eylCount, callee->holder()->name()->as_utf8(), callee->name()->as_utf8(),
+  //            caller->holder()->name()->as_utf8(), caller->name()->as_utf8()) < 0) {
+  //  abort();
+  //}
+  //++eylCount;
 
   // Note: When we get profiling during stage-1 compiles, we want to pull
   // from more specific profile data which pertains to this inlining.
@@ -170,8 +192,33 @@ CallGenerator* Compile::call_generator(ciMethod* callee, int vtable_index, bool 
       bool should_delay = false;
       WarmCallInfo* ci = ilt->ok_to_inline(callee, jvms, profile, &scratch_ci, should_delay);
       assert(ci != &scratch_ci, "do not let this pointer escape");
+      //tty->print("callee symbol = %s\n", callee->name()->as_utf8());
+      //tty->print("callee signature_as_symbol = %s\n", callee->signature()->as_symbol()->as_utf8());
+      //tty->print("callee holder name = %s\n", callee->holder()->name()->as_utf8());
       bool allow_inline   = (ci != NULL && !ci->is_cold());
       bool require_inline = (allow_inline && ci->is_hot());
+
+      if (getenv("INLINE_MODE") != NULL && strcmp(getenv("INLINE_MODE"), noInliningStr) == 0) allow_inline = require_inline = false;
+
+      if (getenv("INLINE_MODE") != NULL && strcmp(getenv("INLINE_MODE"), forceInlineMethodStr) == 0) {
+        if (getenv("FORCE_INLINE_TARGET") != NULL) {
+          sprintf(methodInlineName, "%s.%s", callee->holder()->name()->as_utf8(), callee->name()->as_utf8());
+          if (strcmp(getenv("FORCE_INLINE_TARGET"), methodInlineName) == 0) {
+            tty->print("found method %s\n", methodInlineName);
+            allow_inline = require_inline = true;
+          }
+        } else {
+          tty->print("must set FORCE_INLINE_TARGET with %s\n", forceInlineMethodStr);
+        }
+      }
+
+      if (require_inline) {
+        tty->print("require inline of %s.%s\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8());
+      } else if (allow_inline) {
+        tty->print("allow inline of %s.%s\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8());
+      } else {
+        tty->print("do not allow inline of %s.%s\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8());
+      }
 
       if (allow_inline) {
         CallGenerator* cg = CallGenerator::for_inline(callee, expected_uses);
@@ -182,20 +229,40 @@ CallGenerator* Compile::call_generator(ciMethod* callee, int vtable_index, bool 
           // first.
           if (should_delay_string_inlining(callee, jvms)) {
             assert(!delayed_forbidden, "strange");
+            if (dprintf(eylFd, "callee = %s.%s, caller = %s.%s - for_string_late_inline\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8(),
+                        caller->holder()->name()->as_utf8(), caller->name()->as_utf8()) < 0) {
+              abort();
+            }
             return CallGenerator::for_string_late_inline(callee, cg);
           } else if (should_delay_boxing_inlining(callee, jvms)) {
             assert(!delayed_forbidden, "strange");
+            if (dprintf(eylFd, "callee = %s.%s, caller = %s.%s - for_boxing_late_inline\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8(),
+                        caller->holder()->name()->as_utf8(), caller->name()->as_utf8()) < 0) {
+              abort();
+            }
             return CallGenerator::for_boxing_late_inline(callee, cg);
           } else if ((should_delay || AlwaysIncrementalInline) && !delayed_forbidden) {
+            if (dprintf(eylFd, "callee = %s.%s, caller = %s.%s - for_late_inline\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8(),
+                        caller->holder()->name()->as_utf8(), caller->name()->as_utf8()) < 0) {
+              abort();
+            }
             return CallGenerator::for_late_inline(callee, cg);
           }
         }
         if (cg == NULL || should_delay) {
           // Fall through.
         } else if (require_inline || !InlineWarmCalls) {
+          if (dprintf(eylFd, "callee = %s.%s, caller = %s.%s - require_inline || !InlineWarmCalls\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8(),
+                      caller->holder()->name()->as_utf8(), caller->name()->as_utf8()) < 0) {
+            abort();
+          }
           return cg;
         } else {
           CallGenerator* cold_cg = call_generator(callee, vtable_index, call_does_dispatch, jvms, false, prof_factor);
+          if (dprintf(eylFd, "callee = %s.%s, caller = %s.%s - for_warm_call\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8(),
+                      caller->holder()->name()->as_utf8(), caller->name()->as_utf8()) < 0) {
+            abort();
+          }
           return CallGenerator::for_warm_call(ci, cold_cg, cg);
         }
       }
@@ -298,16 +365,29 @@ CallGenerator* Compile::call_generator(ciMethod* callee, int vtable_index, bool 
   // for already discovered intrinsic.
   if (allow_inline && allow_intrinsics && cg_intrinsic != NULL) {
     assert(cg_intrinsic->does_virtual_dispatch(), "sanity");
+
+    if (dprintf(eylFd, "callee = %s.%s, caller = %s.%s - discovered intrinsic\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8(),
+                caller->holder()->name()->as_utf8(), caller->name()->as_utf8()) < 0) {
+      abort();
+    }
     return cg_intrinsic;
   }
 
   // There was no special inlining tactic, or it bailed out.
   // Use a more generic tactic, like a simple call.
   if (call_does_dispatch) {
+    if (dprintf(eylFd, "callee = %s.%s, caller = %s.%s - for_virtual_call\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8(),
+                caller->holder()->name()->as_utf8(), caller->name()->as_utf8()) < 0) {
+      abort();
+    }
     return CallGenerator::for_virtual_call(callee, vtable_index);
   } else {
     // Class Hierarchy Analysis or Type Profile reveals a unique target,
     // or it is a static or special call.
+    if (dprintf(eylFd, "callee = %s.%s, caller = %s.%s - unique target / static/special call\n", callee->holder()->name()->as_utf8(), callee->name()->as_utf8(),
+                caller->holder()->name()->as_utf8(), caller->name()->as_utf8()) < 0) {
+      abort();
+    }
     return CallGenerator::for_direct_call(callee, should_delay_inlining(callee, jvms));
   }
 }
