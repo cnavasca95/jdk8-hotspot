@@ -9,7 +9,7 @@
 #include <vector>
 
 #include <arpa/inet.h>
-#include <libpq-fe.h>
+#include <postgresql/libpq-fe.h>
 
 using namespace project_totus;
 
