@@ -145,7 +145,7 @@ PostgreSQL::PostgreSQL(const std::string &PackageName,
   }
   Params Params;
   Params.addText("project_totus");
-  Params.addText("0001_initial");
+  Params.addText("0002_increase_method_descriptor_length");
   auto Result = ExecTuples(
     *Impl,
     "SELECT id FROM django_migrations WHERE app = $1 AND name = $2;",
